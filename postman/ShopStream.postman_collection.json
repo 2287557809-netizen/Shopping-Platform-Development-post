@@ -1,0 +1,947 @@
+{
+  "info": {
+    "name": "ShopStream - Gateway API",
+    "description": "Demo collection for the ShopStream distributed e-commerce backend.\n\nEvery request goes through the API gateway on http://localhost:8080. No business service port is used.\n\nRun the folders in order:\n0 Smoke -> 1 Products -> 2 Search -> 3 Cart -> 4 Orders -> 5 Notifications\n\nVariables are captured automatically (productId, productId2, orderId, orderId2).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "userId", "value": "demo-user" },
+    { "key": "productId", "value": "1" },
+    { "key": "productId2", "value": "2" },
+    { "key": "tempProductId", "value": "3" },
+    { "key": "orderId", "value": "1" },
+    { "key": "orderId2", "value": "2" }
+  ],
+  "item": [
+    {
+      "name": "0 - Smoke tests",
+      "item": [
+        {
+          "name": "Gateway is up (list products)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Proves that the only published endpoint, the gateway on 8080, can reach product-service through Eureka."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway answers with 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Gateway adds X-Request-Id', function () {",
+                  "  pm.expect(pm.response.headers.has('X-Request-Id')).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('Response body is a JSON array', function () {",
+                  "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown product returns 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/999999",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "999999"]
+            },
+            "description": "Explicit cache-aside never stores a missing product, so this always hits the database and returns 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Missing product is 404', function () {",
+                  "  pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('404 response has no cached marker header', function () {",
+                  "  pm.expect(pm.response.headers.has('X-Cache')).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 - Products",
+      "item": [
+        {
+          "name": "Create product A (Laptop)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptop Pro 14\",\n  \"description\": \"14 inch developer laptop with 32 GB RAM\",\n  \"category\": \"electronics\",\n  \"price\": 1299.00,\n  \"stock\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Creates a product; the id is stored in {{productId}} and reused by the cart and order folders."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Product created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const product = pm.response.json();",
+                  "pm.collectionVariables.set('productId', String(product.id));",
+                  "pm.test('Response has a generated id', function () {",
+                  "  pm.expect(product.id).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create product B (Keyboard)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mechanical Keyboard\",\n  \"description\": \"Hot-swappable mechanical keyboard\",\n  \"category\": \"accessories\",\n  \"price\": 89.00,\n  \"stock\": 10\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Product created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('productId2', String(pm.response.json().id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List contains at least two products', function () {",
+                  "  pm.expect(pm.response.json().length).to.be.at.least(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product (cache MISS expected)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "First read after a write: the Redis key was evicted or never created, so the service reads PostgreSQL and repopulates the cache."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('X-Cache header is exposed', function () {",
+                  "  pm.expect(pm.response.headers.get('X-Cache')).to.be.oneOf(['MISS', 'HIT']);",
+                  "});",
+                  "",
+                  "pm.test('Product body is returned', function () {",
+                  "  pm.expect(pm.response.json().id).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product again (cache HIT)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "Second read is served from Redis without touching PostgreSQL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Second read is a cache hit', function () {",
+                  "  pm.expect(pm.response.headers.get('X-Cache')).to.eql('HIT');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update product (evicts cache)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptop Pro 14\",\n  \"description\": \"14 inch developer laptop with 32 GB RAM\",\n  \"category\": \"electronics\",\n  \"price\": 1249.00,\n  \"stock\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{productId}}"]
+            },
+            "description": "After commit the service deletes product:{id} from Redis and publishes ProductUpdated to product-events."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Price was updated', function () {",
+                  "  pm.expect(Number(pm.response.json().price)).to.eql(1249.0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create temporary product",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Temporary Item\",\n  \"description\": \"Created only to demonstrate DELETE\",\n  \"category\": \"test\",\n  \"price\": 1.00,\n  \"stock\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "pm.collectionVariables.set('tempProductId', String(pm.response.json().id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete temporary product",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{tempProductId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{tempProductId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete returns 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deleted product is gone",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/{{tempProductId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "{{tempProductId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Deleted product returns 404', function () {",
+                  "  pm.response.to.have.status(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 - Search",
+      "item": [
+        {
+          "name": "Search by text",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?text=laptop",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "search"],
+              "query": [{ "key": "text", "value": "laptop" }]
+            },
+            "description": "Fed by product-events through Kafka. Wait one second after creating a product before running this."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Search returns a paging envelope', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('content');",
+                  "  pm.expect(body).to.have.property('totalElements');",
+                  "});",
+                  "",
+                  "pm.test('Laptop is indexed', function () {",
+                  "  pm.expect(pm.response.json().totalElements).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search with category and price range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?category=electronics&minPrice=500&maxPrice=2000&sort=priceAsc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "search"],
+              "query": [
+                { "key": "category", "value": "electronics" },
+                { "key": "minPrice", "value": "500" },
+                { "key": "maxPrice", "value": "2000" },
+                { "key": "sort", "value": "priceAsc" }
+              ]
+            },
+            "description": "bool query: term(category) + range(price) with an explicit sort on the price field."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Every hit is in the requested category', function () {",
+                  "  pm.response.json().content.forEach(function (hit) {",
+                  "    pm.expect(hit.category).to.eql('electronics');",
+                  "  });",
+                  "});",
+                  "",
+                  "pm.test('Prices stay inside the range', function () {",
+                  "  pm.response.json().content.forEach(function (hit) {",
+                  "    pm.expect(Number(hit.price)).to.be.within(500, 2000);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search with paging",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?page=0&size=2&sort=nameAsc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "search"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "2" },
+                { "key": "sort", "value": "nameAsc" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Page size is respected', function () {",
+                  "  pm.expect(pm.response.json().content.length).to.be.at.most(2);",
+                  "});",
+                  "",
+                  "pm.test('Paging metadata is present', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.page).to.eql(0);",
+                  "  pm.expect(body.size).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 - Cart",
+      "item": [
+        {
+          "name": "Add item to cart",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": {{productId}},\n  \"quantity\": 2\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}/items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}", "items"]
+            },
+            "description": "cart-service reads the product snapshot through Feign, stores the cart as one JSON document in Redis and refreshes a 30 minute TTL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cart contains one line', function () {",
+                  "  pm.expect(pm.response.json().items.length).to.eql(1);",
+                  "});",
+                  "",
+                  "pm.test('Total price was calculated on the server', function () {",
+                  "  const cart = pm.response.json();",
+                  "  pm.expect(Number(cart.totalPrice)).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read cart",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Quantity is two', function () {",
+                  "  pm.expect(pm.response.json().items[0].quantity).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set quantity to three",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}/items/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}", "items", "{{productId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Quantity was replaced', function () {",
+                  "  pm.expect(pm.response.json().items[0].quantity).to.eql(3);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set quantity to zero removes the line",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}/items/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}", "items", "{{productId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cart is empty again', function () {",
+                  "  pm.expect(pm.response.json().items.length).to.eql(0);",
+                  "});",
+                  "",
+                  "pm.test('Empty cart totals zero', function () {",
+                  "  pm.expect(Number(pm.response.json().totalPrice)).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item again (restock cart)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": {{productId}},\n  \"quantity\": 2\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}/items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}", "items"]
+            }
+          }
+        },
+        {
+          "name": "Checkout cart",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "" },
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}/checkout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}", "checkout"]
+            },
+            "description": "cart-service creates the order through Feign and clears Redis only after order-service accepted the request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order created from cart', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const order = pm.response.json();",
+                  "pm.collectionVariables.set('orderId', String(order.id));",
+                  "pm.test('Order starts as PENDING', function () {",
+                  "  pm.expect(order.status).to.eql('PENDING');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cart is empty after checkout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Checkout cleared the cart', function () {",
+                  "  pm.expect(pm.response.json().items.length).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 - Orders and inventory Saga",
+      "item": [
+        {
+          "name": "Create order with too much stock",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"productId\": {{productId}}, \"quantity\": 999 }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Order-service prices the order through Feign and publishes OrderCreated; product-service rejects it because stock is insufficient."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order accepted for processing', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "pm.collectionVariables.set('orderId2', String(pm.response.json().id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read first order (poll until confirmed)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders", "{{orderId}}"]
+            },
+            "description": "Polls the order endpoint until the inventory Saga leaves PENDING. Product rows are locked with SELECT ... FOR UPDATE and stock is decremented in one transaction."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.collectionVariables.get('baseUrl');",
+                  "const orderId = pm.collectionVariables.get('orderId');",
+                  "let attempts = 0;",
+                  "",
+                  "function poll() {",
+                  "  pm.sendRequest(baseUrl + '/api/orders/' + orderId, function (err, res) {",
+                  "    if (err) { console.error(err); return; }",
+                  "    const order = res.json();",
+                  "    if (order.status === 'PENDING' && attempts < 10) {",
+                  "      attempts += 1;",
+                  "      setTimeout(poll, 500);",
+                  "      return;",
+                  "    }",
+                  "    pm.test('Order is CONFIRMED by the inventory Saga', function () {",
+                  "      pm.expect(order.status).to.eql('CONFIRMED');",
+                  "    });",
+                  "    pm.test('Stock was reserved exactly once', function () {",
+                  "      pm.expect(order.items.length).to.be.at.least(1);",
+                  "    });",
+                  "    pm.collectionVariables.set('orderStatus', order.status);",
+                  "  });",
+                  "}",
+                  "",
+                  "poll();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read rejected order (poll until rejected)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders/{{orderId2}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders", "{{orderId2}}"]
+            },
+            "description": "The whole reservation is rolled back when one item is short, so no partial stock deduction can happen."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.collectionVariables.get('baseUrl');",
+                  "const orderId = pm.collectionVariables.get('orderId2');",
+                  "let attempts = 0;",
+                  "",
+                  "function poll() {",
+                  "  pm.sendRequest(baseUrl + '/api/orders/' + orderId, function (err, res) {",
+                  "    if (err) { console.error(err); return; }",
+                  "    const order = res.json();",
+                  "    if (order.status === 'PENDING' && attempts < 10) {",
+                  "      attempts += 1;",
+                  "      setTimeout(poll, 500);",
+                  "      return;",
+                  "    }",
+                  "    pm.test('Order is REJECTED', function () {",
+                  "      pm.expect(order.status).to.eql('REJECTED');",
+                  "    });",
+                  "    pm.test('Rejection carries a reason', function () {",
+                  "      pm.expect(order.failureReason).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "  });",
+                  "}",
+                  "",
+                  "poll();"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List confirmed orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/orders?status=CONFIRMED",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders"],
+              "query": [{ "key": "status", "value": "CONFIRMED" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Only confirmed orders are returned', function () {",
+                  "  pm.response.json().forEach(function (order) {",
+                  "    pm.expect(order.status).to.eql('CONFIRMED');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 - Notifications",
+      "item": [
+        {
+          "name": "Latest notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications"],
+              "query": [{ "key": "limit", "value": "20" }]
+            },
+            "description": "notification-service subscribes to all three topics with its own consumer groups and keeps the latest 200 notifications in memory (the assignment does not require a database for this service)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notifications were consumed from Kafka', function () {",
+                  "  pm.expect(pm.response.json().length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test('Every notification has an event type', function () {",
+                  "  pm.response.json().forEach(function (n) {",
+                  "    pm.expect(n.eventType).to.be.a('string');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Notifications for confirmed order",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications", "{{orderId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order lifecycle notifications exist', function () {",
+                  "  const types = pm.response.json().map(function (n) { return n.eventType; });",
+                  "  pm.expect(types).to.include('OrderCreated');",
+                  "  pm.expect(types).to.include('OrderConfirmed');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Notifications for rejected order",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/{{orderId2}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications", "{{orderId2}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rejection notification exists', function () {",
+                  "  const types = pm.response.json().map(function (n) { return n.eventType; });",
+                  "  pm.expect(types).to.include('StockRejected');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear cart (cleanup)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/carts/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "carts", "{{userId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cart cleared', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
