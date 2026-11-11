@@ -1,0 +1,29 @@
+spring:
+  cloud:
+    function:
+      definition: orderEvents;inventoryEvents;productEvents
+    stream:
+      bindings:
+        orderEvents-in-0:
+          destination: order-events
+          group: notification-service-order
+          content-type: text/plain
+        inventoryEvents-in-0:
+          destination: inventory-events
+          group: notification-service-inventory
+          content-type: text/plain
+        productEvents-in-0:
+          destination: product-events
+          group: notification-service-product
+          content-type: text/plain
+      kafka:
+        bindings:
+          orderEvents-in-0:
+            consumer:
+              auto-offset-reset: earliest
+          inventoryEvents-in-0:
+            consumer:
+              auto-offset-reset: earliest
+          productEvents-in-0:
+            consumer:
+              auto-offset-reset: earliest

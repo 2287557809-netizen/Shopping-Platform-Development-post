@@ -1,0 +1,19 @@
+spring:
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:mypass}
+      timeout: 2s
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 5000
+            logger-level: basic
+
+cart:
+  # Sliding TTL refreshed on every mutation; ISO-8601 or "30m" both work.
+  ttl: 30m

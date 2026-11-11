@@ -1,0 +1,42 @@
+# Development-only overlay. Keep docker-compose.yml as the submission file:
+# it publishes only the gateway. Use this file when you want to inspect the
+# databases, Eureka, Config Server, Kafka or Elasticsearch from the host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Host endpoints:
+#   Eureka          http://localhost:8761
+#   Config Server   http://localhost:8888
+#   Elasticsearch   http://localhost:9200
+#   Product DB      localhost:5432  (product / product-pw)
+#   Order DB        localhost:5433  (order / order-pw)
+#   Redis           localhost:6379  (password mypass)
+#   Kafka           localhost:29092 (from the host)
+services:
+  discovery-server:
+    ports:
+      - "8761:8761"
+
+  config-server:
+    ports:
+      - "8888:8888"
+
+  product-postgres:
+    ports:
+      - "5432:5432"
+
+  order-postgres:
+    ports:
+      - "5433:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  kafka:
+    ports:
+      - "29092:29092"
+
+  elasticsearch:
+    ports:
+      - "9200:9200"

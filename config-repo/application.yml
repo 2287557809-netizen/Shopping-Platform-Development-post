@@ -1,0 +1,39 @@
+# Shared by every service that imports the Config Server.
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+spring:
+  cloud:
+    stream:
+      kafka:
+        binder:
+          brokers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+          auto-create-topics: true
+      default:
+        consumer:
+          max-attempts: 3
+          backoff:
+            initial-interval: 1000
+            multiplier: 2.0
+            max-interval: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    org.springframework.cloud.stream: INFO
+    org.springframework.kafka: WARN

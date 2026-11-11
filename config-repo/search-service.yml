@@ -1,0 +1,19 @@
+spring:
+  elasticsearch:
+    uris: ${SPRING_ELASTICSEARCH_URIS:http://localhost:9200}
+    connection-timeout: 2s
+    socket-timeout: 5s
+  cloud:
+    function:
+      definition: productEvents
+    stream:
+      bindings:
+        productEvents-in-0:
+          destination: product-events
+          group: search-service
+          content-type: text/plain
+      kafka:
+        bindings:
+          productEvents-in-0:
+            consumer:
+              auto-offset-reset: earliest

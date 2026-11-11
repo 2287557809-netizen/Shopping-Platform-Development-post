@@ -1,0 +1,50 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/productdb}
+    username: ${SPRING_DATASOURCE_USERNAME:product}
+    password: ${SPRING_DATASOURCE_PASSWORD:product-pw}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:mypass}
+      timeout: 2s
+  cloud:
+    function:
+      definition: orderEvents
+    stream:
+      bindings:
+        productEvents-out-0:
+          destination: product-events
+          content-type: text/plain
+        orderEvents-in-0:
+          destination: order-events
+          group: product-service
+          content-type: text/plain
+        inventoryEvents-out-0:
+          destination: inventory-events
+          content-type: text/plain
+      kafka:
+        bindings:
+          productEvents-out-0:
+            producer:
+              configuration:
+                key.serializer: org.apache.kafka.common.serialization.StringSerializer
+          inventoryEvents-out-0:
+            producer:
+              configuration:
+                key.serializer: org.apache.kafka.common.serialization.StringSerializer
+          orderEvents-in-0:
+            consumer:
+              auto-offset-reset: earliest
