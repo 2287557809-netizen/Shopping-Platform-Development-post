@@ -1,16 +1,12 @@
 package hu.unimiskolc.shopstream.cart;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,46 +14,28 @@ import java.util.List;
 public class CartService {
 
     private static final Logger log = LoggerFactory.getLogger(CartService.class);
-    private static final String KEY_PREFIX = "cart:";
     private static final int MAX_QUANTITY = 99;
 
-    private final StringRedisTemplate redis;
-    private final ObjectMapper objectMapper;
+    private final CartRepository repository;
     private final ProductClient productClient;
     private final OrderClient orderClient;
-    private final Duration ttl;
+    private final long timeToLiveSeconds;
 
-    public CartService(StringRedisTemplate redis,
-                       ObjectMapper objectMapper,
+    public CartService(CartRepository repository,
                        ProductClient productClient,
                        OrderClient orderClient,
-                       @Value("${cart.ttl:30m}") Duration ttl) {
-        this.redis = redis;
-        this.objectMapper = objectMapper;
+                       @Value("${cart.time-to-live-seconds:1800}") long timeToLiveSeconds) {
+        this.repository = repository;
         this.productClient = productClient;
         this.orderClient = orderClient;
-        this.ttl = ttl;
+        this.timeToLiveSeconds = timeToLiveSeconds;
     }
 
     public Cart get(String userId) {
-        String key = key(userId);
-        String json;
         try {
-            json = redis.opsForValue().get(key);
+            return repository.findById(userId).orElseGet(() -> new Cart(userId));
         } catch (DataAccessException ex) {
             throw new CartStorageException("Redis is unavailable", ex);
-        }
-
-        if (json == null) {
-            return new Cart(userId);
-        }
-
-        try {
-            return objectMapper.readValue(json, Cart.class);
-        } catch (JsonProcessingException ex) {
-            log.warn("Discarding unreadable cart for {}: {}", userId, ex.getMessage());
-            redis.delete(key);
-            return new Cart(userId);
         }
     }
 
@@ -81,7 +59,7 @@ public class CartService {
         item.setQuantity(newQuantity);
 
         cart.recalculate();
-        save(userId, cart);
+        save(cart);
         return cart;
     }
 
@@ -95,7 +73,7 @@ public class CartService {
         if (quantity == 0) {
             cart.getItems().remove(item);
             cart.recalculate();
-            save(userId, cart);
+            save(cart);
             return cart;
         }
 
@@ -103,7 +81,7 @@ public class CartService {
         checkStock(fetchProduct(productId), quantity);
         item.setQuantity(quantity);
         cart.recalculate();
-        save(userId, cart);
+        save(cart);
         return cart;
     }
 
@@ -111,20 +89,20 @@ public class CartService {
         Cart cart = get(userId);
         cart.getItems().removeIf(item -> productId.equals(item.getProductId()));
         cart.recalculate();
-        save(userId, cart);
+        save(cart);
         return cart;
     }
 
     public void clear(String userId) {
         try {
-            redis.delete(key(userId));
+            repository.findById(userId).ifPresent(repository::delete);
         } catch (DataAccessException ex) {
             throw new CartStorageException("Redis is unavailable", ex);
         }
     }
 
     /**
-     * The cart is only cleared after order-service accepted the order. If the
+     * The cart is cleared only after order-service accepted the order. If the
      * checkout call fails the customer can simply retry with the same cart.
      */
     public OrderResponse checkout(String userId) {
@@ -180,17 +158,16 @@ public class CartService {
         }
     }
 
-    private void save(String userId, Cart cart) {
+    /**
+     * The TTL is refreshed on every write, so the hash expires after 30 minutes
+     * without activity. @TimeToLive reads this field when the entity is saved.
+     */
+    private void save(Cart cart) {
+        cart.setTimeToLive(timeToLiveSeconds);
         try {
-            redis.opsForValue().set(key(userId), objectMapper.writeValueAsString(cart), ttl);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cannot serialize cart for " + userId, ex);
+            repository.save(cart);
         } catch (DataAccessException ex) {
             throw new CartStorageException("Redis is unavailable", ex);
         }
-    }
-
-    private String key(String userId) {
-        return KEY_PREFIX + userId;
     }
 }

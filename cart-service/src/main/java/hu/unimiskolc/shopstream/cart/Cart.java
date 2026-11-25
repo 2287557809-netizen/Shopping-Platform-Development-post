@@ -1,20 +1,39 @@
 package hu.unimiskolc.shopstream.cart;
 
+import org.springframework.data.annotation.Id;
+import org.springframework.data.redis.core.RedisHash;
+import org.springframework.data.redis.core.TimeToLive;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The cart is stored as one JSON document in Redis (key cart:{userId}) with a
- * sliding TTL. A document is simpler to demo than a Redis Hash and keeps the
- * complete, price-snapshotted cart atomic.
+ * Step 4, task 2: the cart is a Redis hash.
+ *
+ * <p>{@link RedisHash} maps the entity to keys of the form {@code carts:{userId}},
+ * {@link Id} is the userId, and {@link TimeToLive} makes the whole hash expire
+ * without any manual {@code EXPIRE} call. The TTL is refreshed on every save,
+ * so an active shopper keeps the cart while an abandoned one loses it.</p>
  */
-public class Cart {
+@RedisHash("carts")
+public class Cart implements Serializable {
 
+    private static final long serialVersionUID = 1L;
+
+    @Id
     private String userId;
+
+    /** Expiry in seconds, maintained by Spring Data Redis. */
+    @TimeToLive
+    private Long timeToLive;
+
     private List<CartItem> items = new ArrayList<>();
+
     private BigDecimal totalPrice = BigDecimal.ZERO;
+
     private Instant updatedAt;
 
     public Cart() {
@@ -50,6 +69,14 @@ public class Cart {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public Long getTimeToLive() {
+        return timeToLive;
+    }
+
+    public void setTimeToLive(Long timeToLive) {
+        this.timeToLive = timeToLive;
     }
 
     public List<CartItem> getItems() {

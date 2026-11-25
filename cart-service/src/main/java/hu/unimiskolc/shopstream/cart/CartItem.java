@@ -1,8 +1,15 @@
 package hu.unimiskolc.shopstream.cart;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 
-public class CartItem {
+/**
+ * One line of the cart. It is stored inside the cart hash, so it has to be
+ * serialisable; it does not need its own Redis key.
+ */
+public class CartItem implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     private Long productId;
     private String name;
