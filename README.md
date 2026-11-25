@@ -1,323 +1,164 @@
 # ShopStream
 
-A distributed e-commerce backend built with Spring Boot, Spring Cloud, Kafka,
-PostgreSQL, Redis and Elasticsearch. All client traffic enters through one API
-gateway; every business service owns its own data store.
-
-This repository is the submission-ready version of the course project. The
-frontend was intentionally removed: the assignment only requires the gateway
-API to be demonstrated with Postman or curl.
+ShopStream is the semester project of the Distributed Systems course: a small
+e-commerce backend made of five business services and three infrastructure
+services. All client traffic enters through one API gateway, every service owns
+its own data store, and services talk to each other through REST (Feign) or
+Kafka events.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    client[Postman / curl] -->|:8080 /api/**| gateway[api-gateway]
-    gateway -->|Eureka lb| product[product-service :8081]
-    gateway -->|Eureka lb| order[order-service :8082]
-    gateway -->|Eureka lb| cart[cart-service :8083]
-    gateway -->|Eureka lb| search[search-service :8084]
-    gateway -->|Eureka lb| notification[notification-service :8085]
+flowchart TB
+  client[Client / Postman] --> gateway[api-gateway :8080]
+  gateway -->|lb://product-service| product[product-service x2]
+  gateway -->|lb://order-service| order[order-service]
+  gateway -->|lb://cart-service| cart[cart-service]
+  gateway -->|lb://search-service| search[search-service]
+  gateway -->|lb://notification-service| notification[notification-service]
 
-    product --> productdb[(productdb<br/>PostgreSQL)]
-    product --> redis[(Redis<br/>product cache)]
-    product -->|product-events| kafka[(Kafka)]
-    product -->|inventory-events| kafka
+  cart -->|Feign| product
+  cart -->|Feign| order
+  order -->|Feign| product
 
-    order --> orderdb[(orderdb<br/>PostgreSQL)]
-    order -->|order-events| kafka
-    order -.->|Feign price lookup| product
+  order -->|OrderPlaced / OrderConfirmed / OrderRejected| kafka[(Kafka KRaft)]
+  product -->|StockReserved / StockRejected| kafka
+  product -->|ProductCreated / Updated / Deleted| kafka
+  kafka --> product
+  kafka --> order
+  kafka --> search
+  kafka --> notification
 
-    cart --> redis
-    cart -.->|Feign checkout| order
-    cart -.->|Feign product snapshot| product
-
-    search -->|product-events| kafka
-    search --> elasticsearch[(Elasticsearch<br/>products index)]
-
-    notification -->|order-events / inventory-events / product-events| kafka
-
-    discovery[discovery-server :8761]
-    config[config-server :8888]
-    gateway -.-> discovery
-    product -.-> discovery
-    order -.-> discovery
-    cart -.-> discovery
-    search -.-> discovery
-    notification -.-> discovery
-    product -.-> config
-    order -.-> config
-    cart -.-> config
-    search -.-> config
-    notification -.-> config
-    gateway -.-> config
+  product --> productdb[(productdb MySQL)]
+  order --> orderdb[(orderdb MySQL)]
+  cart --> redis[(Redis)]
+  product --> redis
+  search --> es[(Elasticsearch)]
 ```
-
-Only `api-gateway:8080` is published to the host. PostgreSQL, Redis, Kafka,
-Elasticsearch, Eureka, Config Server and all business services stay on the
-internal Compose network.
 
 ## Services
 
-| Service | Port | Responsibility | Storage |
+| Service | Port | Data store | Responsibility |
 | --- | --- | --- | --- |
-| `api-gateway` | 8080 | Java DSL routes, `StripPrefix=1`, request-id filter | — |
-| `discovery-server` | 8761 | Eureka registry | — |
-| `config-server` | 8888 | Native Spring Cloud Config, serves `config-repo/` | `config-repo/` |
-| `product-service` | 8081 | Product CRUD, Redis cache-aside, stock reservation Saga participant, publishes `product-events` / `inventory-events` | PostgreSQL `productdb` + Redis |
-| `order-service` | 8082 | Order creation, Feign price lookup, Saga orchestration, publishes `order-events`, consumes `inventory-events` | PostgreSQL `orderdb` |
-| `cart-service` | 8083 | Redis cart API, checkout through Feign | Redis |
-| `search-service` | 8084 | Consumes `product-events`, maintains the Elasticsearch index, search API | Elasticsearch |
-| `notification-service` | 8085 | Consumes all three topics, keeps an observable notification log | In-memory (no database by design) |
+| `api-gateway` | 8080 (only published port) | none | Spring Cloud Gateway routes, `X-Request-Id` filter |
+| `discovery-server` | 8761 | none | Eureka registry (`@EnableEurekaServer`) |
+| `config-server` | 8888 | `config-repo/` folder | Central configuration (`@EnableConfigServer`) |
+| `product-service` | 8081 | MySQL `productdb`, Redis cache | Product CRUD, stock reservation, product cache |
+| `order-service` | 8082 | MySQL `orderdb` | Orders, PENDING → CONFIRMED/REJECTED |
+| `cart-service` | 8083 | Redis | Cart hash per user, checkout |
+| `search-service` | 8084 | Elasticsearch | Product search index |
+| `notification-service` | 8085 | none (log only) | One "email" log line per event |
 
-## What is different in this implementation
+## How the project description is implemented
 
-The external behaviour matches the assignment, but the internals deliberately
-use a different approach from the classic tutorial solution:
+| Step | Task | Implementation |
+| --- | --- | --- |
+| 1 | One MySQL database per service | `product-mysql` (`productdb`) and `order-mysql` (`orderdb`), MySQL 8.4, named volumes, `depends_on` with health checks; the JDBC URLs point to the container names |
+| 1 | Product CRUD, order create/read | `ProductController` (`/products`), `OrderController` (`/orders`), JPA repositories |
+| 2 | Kafka in KRaft mode | single `apache/kafka:3.9.1` container, `KAFKA_PROCESS_ROLES=broker,controller`, no ZooKeeper |
+| 2 | Topics from Java, 3 partitions | `KafkaTopicConfig` with `NewTopic` / `TopicBuilder` in product- and order-service |
+| 2 | JSON events, `orderId` / `productId` as key | `KafkaTemplate<String, Object>` + `JsonSerializer`, `@KafkaListener` + `JsonDeserializer`; key = aggregate id |
+| 2 | Order lifecycle | `OrderService` saves `PENDING`, `OrderEventPublisher` publishes `OrderPlaced` after commit, `InventoryEventsListener` applies the inventory result |
+| 2 | Stock reservation idempotent | `stock_reservations.order_id` is the primary key; the order state machine only accepts one transition from `PENDING` |
+| 3 | Index mapping | `ProductDocument` with `@Document(indexName = "products")`, `@Field` (`name` text + `name.keyword`, `category` keyword, `price` double, `stock` integer) |
+| 3 | Index maintenance | `ProductEventsListener` saves/deletes through `ProductSearchRepository` |
+| 3 | Search API | `SearchService`: derived `findByCategory` for the simple case, `ElasticsearchOperations` with a native bool query for text + category + price + paging + sort |
+| 4 | Cart as Redis hash | `Cart` annotated `@RedisHash("carts")`, `@Id userId`, `CartRepository extends CrudRepository<Cart, String>` |
+| 4 | Cart expiry | `@TimeToLive` field, refreshed on every save; **TTL = 30 minutes (1800 s)** |
+| 4 | Product cache | `@Cacheable("products")` on `GET /products/{id}`, `@CacheEvict` on update/delete and on stock reservation |
+| 5 | Two product instances | `product-service-1` and `product-service-2` in `docker-compose.yml`, both registered in Eureka, one Kafka consumer group |
+| 5 | Config server | `config-server` with the `config-repo/` folder: shared `application.yml` plus one file per service, including database URLs, Kafka settings and `app.topics.*` |
+| 5 | Feign with service names | `ProductClient`, `OrderClient` (`@FeignClient(name = "product-service")`, etc.) |
+| 5 | Gateway + `X-Request-Id` | routes `/api/products/**`, `/api/orders/**`, `/api/carts/**`, `/api/search/**` to `lb://`, `StripPrefix`, `XRequestIdFilter` |
 
-- **PostgreSQL instead of MySQL**, one database container per stateful service.
-- **Spring Cloud Stream (Kafka binder)** instead of `KafkaTemplate` /
-  `@KafkaListener`; a common JSON envelope is shared by all events.
-- **Explicit cache-aside in `ProductService`** instead of `@Cacheable`, so 404
-  responses are never cached and Redis failures fall back to the database.
-- **Java DSL gateway routes** instead of YAML route definitions.
-- **Elasticsearch Java client** for queries instead of the repository query
-  derivation API.
-- **Cart as one JSON document in Redis** with a sliding TTL instead of a Hash.
-- **Idempotent inventory Saga** with a `stock_reservations` table and
-  PostgreSQL row locks (`SELECT ... FOR UPDATE`).
-- **Docker Compose publishes only the gateway**, with a separate
-  `docker-compose.dev.yml` overlay for debugging.
-- **No frontend**; the demo is gateway-only, as allowed by the assignment.
+## Run it
 
-## Quick start
-
-```bash
+```powershell
 docker compose up -d --build
 docker compose ps
 ```
 
-The first start builds eight images and may take several minutes. Wait until
-`api-gateway` is healthy, then open:
+The first build takes several minutes (five Maven builds plus Kafka and
+Elasticsearch images). When every container is `healthy`:
 
-```bash
-curl http://localhost:8080/api/products
+```powershell
+curl.exe http://localhost:8080/api/products
 ```
 
-### 1. Create products
+Only `api-gateway` publishes a host port. To inspect MySQL, Redis, Kafka,
+Elasticsearch, Eureka or the Config Server from the host, add the development
+overlay:
 
-```bash
-curl -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Laptop","description":"14 inch developer laptop","category":"electronics","price":1299.00,"stock":5}'
-
-curl -X POST http://localhost:8080/api/products \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Mechanical Keyboard","description":"Hot-swappable keyboard","category":"accessories","price":89.00,"stock":10}'
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-The response contains the generated `id`. Product reads expose an `X-Cache`
-header (`HIT` or `MISS`), which is useful for the Redis demo.
+Dev ports: Eureka 8761, Config Server 8888, Elasticsearch 9200, Redis 6379,
+Kafka 29092, product MySQL 3306 (`product` / `product-pw`), order MySQL 3307
+(`order` / `order-pw`).
 
-### 2. Search
+## Demo walkthrough (15 minutes)
 
-The search index is updated asynchronously through Kafka:
-
-```bash
-curl "http://localhost:8080/api/search?text=laptop"
-curl "http://localhost:8080/api/search?category=electronics&minPrice=100&sort=priceAsc"
-```
-
-If the request arrives before the consumer caught up, retry after a second.
-
-### 3. Cart and checkout
-
-```bash
-curl -X POST http://localhost:8080/api/carts/alice/items \
-  -H "Content-Type: application/json" \
-  -d '{"productId":1,"quantity":2}'
-
-curl http://localhost:8080/api/carts/alice
-
-curl -X POST http://localhost:8080/api/carts/alice/checkout
-```
-
-The checkout call creates an order through `order-service` and clears the cart
-only after the order was accepted.
-
-### 4. Order and inventory Saga
-
-```bash
-curl -X POST http://localhost:8080/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{"items":[{"productId":1,"quantity":2}]}'
-
-curl http://localhost:8080/api/orders/1
-```
-
-An order is created as `PENDING`. `product-service` consumes `OrderCreated`,
-locks the product rows, reserves stock and publishes `StockReserved` or
-`StockRejected`. `order-service` consumes the result and moves the order to
-`CONFIRMED` or `REJECTED`.
-
-### 5. Notifications
-
-```bash
-curl http://localhost:8080/api/notifications
-curl http://localhost:8080/api/notifications/1
-```
-
-## API
-
-All paths go through the gateway.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/products` | List products |
-| GET | `/api/products/{id}` | Product detail (`X-Cache: HIT/MISS`) |
-| POST | `/api/products` | Create product |
-| PUT | `/api/products/{id}` | Update product |
-| DELETE | `/api/products/{id}` | Delete product |
-| GET | `/api/search` | Search: `text`, `category`, `minPrice`, `maxPrice`, `page`, `size`, `sort` |
-| GET | `/api/carts/{userId}` | Read cart |
-| POST | `/api/carts/{userId}/items` | Add item `{productId, quantity}` |
-| PUT | `/api/carts/{userId}/items/{productId}` | Set quantity |
-| DELETE | `/api/carts/{userId}/items/{productId}` | Remove item |
-| DELETE | `/api/carts/{userId}` | Clear cart |
-| POST | `/api/carts/{userId}/checkout` | Create an order from the cart |
-| POST | `/api/orders` | Create order |
-| GET | `/api/orders/{id}` | Order status and items |
-| GET | `/api/orders?status=PENDING` | List orders, optional status filter |
-| GET | `/api/notifications` | Latest notifications |
-| GET | `/api/notifications/{orderId}` | Notifications for one order |
-
-## Event flow
-
-```
-product-service ──ProductCreated/Updated/Deleted──▶ product-events
-                                                   ├──▶ search-service (index)
-                                                   └──▶ notification-service
-
-order-service ──OrderCreated──▶ order-events ─────────▶ product-service
-                                                 └────▶ notification-service
-
-product-service ──StockReserved/StockRejected──▶ inventory-events
-                                                 ├────▶ order-service (status)
-                                                 └────▶ notification-service
-
-order-service ──OrderConfirmed/OrderRejected──▶ order-events
-```
-
-Every message uses the same envelope:
-
-```json
-{
-  "eventId": "uuid",
-  "eventType": "OrderCreated",
-  "occurredAt": "2026-11-11T12:00:00Z",
-  "payload": { }
-}
-```
-
-See [docs/EVENTS.md](docs/EVENTS.md) for the payload of each event.
-
-## Data model
-
-**productdb**
-
-```
-products(id PK, name, description, category, price DECIMAL, stock INT)
-stock_reservations(order_id PK, status, reason, created_at)
-```
-
-**orderdb**
-
-```
-orders(id PK, status, total_price, created_at, updated_at, failure_reason, version)
-order_items(id PK, order_id FK, product_id, quantity, unit_price)
-```
-
-**Redis**
-
-- `product:{id}` — cached product JSON, TTL 2 minutes.
-- `cart:{userId}` — cart JSON, sliding TTL 30 minutes.
-
-**Elasticsearch**
-
-- index `products`, explicit mapping from `ProductDocument`, one shard, zero
-  replicas, `name` as `text` plus `name.keyword`, `description` as `text`,
-  `category` as `keyword`, `price` as `double`, `stock` as `integer`.
-
-## Configuration and discovery
-
-- Every service imports `configserver:http://config-server:8888` and fails fast
-  if the Config Server is not available.
-- `config-repo/application.yml` holds shared Eureka and Kafka settings;
-  `config-repo/<service>.yml` holds service-specific datasource, Redis,
-  Elasticsearch, Feign and Stream bindings.
-- Eureka service names are used by the gateway (`lb://...`) and by Feign
-  (`@FeignClient(name = "product-service")`), so no host names or fixed
-  container addresses appear in business code.
-
-## Development
-
-The default Compose file is the submission/demo file: only 8080 is exposed.
-For debugging, use the overlay that also publishes infrastructure ports:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-```
-
-| Endpoint | URL |
-| --- | --- |
-| Gateway | http://localhost:8080 |
-| Eureka | http://localhost:8761 |
-| Config Server | http://localhost:8888 |
-| Elasticsearch | http://localhost:9200 |
-| Product PostgreSQL | localhost:5432 (`product` / `product-pw`) |
-| Order PostgreSQL | localhost:5433 (`order` / `order-pw`) |
-| Redis | localhost:6379 (password `mypass`) |
-| Kafka (host listener) | localhost:29092 |
-
-When running a service from an IDE, start `discovery-server` and
-`config-server` first, then run the service with:
-
-```
-CONFIG_SERVER_URL=http://localhost:8888
-EUREKA_URL=http://localhost:8761/eureka/
-```
+1. `docker compose ps` — only the gateway has a published port.
+2. `http://localhost:8761` — seven applications registered (gateway, order,
+   cart, search, notification, config server and product), `PRODUCT-SERVICE`
+   with two instances.
+3. Create two products, `GET /api/products/{id}` twice: the first request logs
+   `Cache miss for product ... reading from MySQL`, the second does not. Check
+   `docker compose exec redis redis-cli -a mypass KEYS 'products::*'`.
+4. Update the product: `@CacheEvict` removes the key; the next read is a miss.
+5. `GET /api/search?text=laptop` and
+   `GET /api/search?category=electronics&minPrice=500&sort=priceAsc`.
+6. `POST /api/carts/demo-user/items`, `GET /api/carts/demo-user`,
+   `docker compose exec redis redis-cli -a mypass HGETALL carts:demo-user`,
+   `TTL carts:demo-user` (≈1800 s).
+7. `POST /api/carts/demo-user/checkout`, then poll
+   `GET /api/orders/{id}` until `CONFIRMED`; a second order with quantity 999
+   becomes `REJECTED`.
+8. Show the logs of `product-service-1`, `product-service-2`, `order-service`,
+   `notification-service` — key = orderId, partition and offset, and the
+   `X-Request-Id` propagated by the gateway.
 
 ## Tests
 
-Each service has JUnit 5 + Mockito unit tests for its core logic:
-
-```bash
-cd product-service && ./mvnw test
-cd order-service   && ./mvnw test
-cd cart-service    && ./mvnw test
-cd search-service  && ./mvnw test
-cd notification-service && ./mvnw test
+```powershell
+.\scripts\run-tests.ps1          # all five services
+.\scripts\run-tests.ps1 -Modules cart-service   # one service
 ```
 
-The tests cover cache hit/miss, stock reservation and rejection, order totals,
-inventory-result idempotency, cart persistence/checkout, ES event handling and
-notification de-duplication.
+The script finds a JDK and a Maven installation, runs `mvn test` module by
+module and prints one line per service. The unit tests do not need Docker: JUnit
+5 + Mockito cover product CRUD and cache annotations, stock reservation
+(including the cache eviction), order state transitions, cart TTL and checkout,
+the search listener and notification de-duplication.
 
-## Documentation
+39 tests in ten classes; `BUILD SUCCESS` in every module. On a JDK newer than
+23 the tests need `-DargLine=-Dnet.bytebuddy.experimental=true`, because the
+Byte Buddy version bundled with Mockito refuses to instrument newer class files;
+that is a tooling limit, not a failure of the project.
 
-- [Design report (Chinese)](docs/DESIGN-REPORT.md)
-- [15-minute demo script (Chinese)](docs/DEMO.md)
-- [Event contracts](docs/EVENTS.md)
-- [Postman collection](postman/ShopStream.postman_collection.json)
+## Design notes
 
-## Known limitations
+- **Database**: MySQL 8.4, one container and one database per service. No
+  service reads another service's schema.
+- **Kafka**: single broker in KRaft mode; three topics (`order-events`,
+  `inventory-events`, `product-events`) with three partitions each, declared by
+  `NewTopic` / `TopicBuilder`. The topic names are kept in `config-repo`.
+- **Events**: JSON envelope `{eventId, eventType, occurredAt, payload}`. The
+  message key is `orderId` or `productId`, so all events of one aggregate stay
+  in one partition and keep their order.
+- **Cart TTL**: 30 minutes, refreshed on every write; the period is
+  `cart.time-to-live-seconds: 1800` in `config-repo/cart-service.yml`.
+- **Product cache TTL**: 2 minutes (`spring.cache.redis.time-to-live: 2m`), and
+  the entry is evicted on every product change or stock reservation.
+- **Screenshots**: `docs/screenshots/` holds the fourteen images used in the
+  report. Every terminal image is produced by `scripts/evidence.ps1 <section>`,
+  the test summary by `scripts/run-tests.ps1`, and Appendix A of the report maps
+  each figure to the command behind it.
+- **Documents**: `ShopStream-Design-Report.pdf` in the repository root (exported
+  from `docs/DESIGN-REPORT.md`), `docs/DESIGN-REPORT.md` (report source,
+  including the per-task coverage table), `docs/REVISION-SUMMARY.md`
+  (point-by-point response to the review), `docs/EVENTS.md` (topics and event
+  contract), `docs/DEMO.md` (demo script), `docs/shopstream-architecture.png`
+  (the topology figure, regenerated by `scripts/render_architecture.py`).
 
-- The project is a teaching/demo system: there is no authentication or user
-  account service. Cart user IDs are demo identifiers.
-- Kafka consumers use at-least-once delivery. The inventory Saga is idempotent
-  through `stock_reservations`, but there is no transactional outbox yet; a
-  crash between database commit and event publication can leave an order
-  `PENDING`.
-- Search is eventually consistent because it is fed by Kafka.
-- `docker compose up` exposes only the gateway by design; use the dev overlay
-  when you need direct access to infrastructure.

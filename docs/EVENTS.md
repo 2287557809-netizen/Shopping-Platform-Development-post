@@ -1,16 +1,17 @@
 # Event contracts
 
-All services publish and consume JSON through Spring Cloud Stream with the
-Kafka binder. The payload is serialised as a JSON string with `text/plain`
-content type so no Java class name travels in Kafka headers. Each consumer has
-its own small DTO, which keeps services independently deployable.
+All services publish and consume JSON with `KafkaTemplate` and `@KafkaListener`.
+The producer uses `JsonSerializer`, the consumer uses `JsonDeserializer`, and
+type headers are disabled, so no Java class name travels in Kafka headers. Each
+consumer has its own small `EventMessage` record and reads the payload field by
+field, which keeps the services independently deployable.
 
 ## Envelope
 
 ```json
 {
   "eventId": "2f1c9a7e-...",
-  "eventType": "OrderCreated",
+  "eventType": "OrderPlaced",
   "occurredAt": "2026-11-11T12:00:00Z",
   "payload": {}
 }
@@ -23,16 +24,20 @@ its own small DTO, which keeps services independently deployable.
 | `occurredAt` | ISO-8601 instant |
 | `payload` | Event-specific body |
 
-Kafka message key is the aggregate id (`productId` or `orderId`), so related
-events for the same aggregate land on the same partition and stay ordered.
+The Kafka message key is the aggregate id (`orderId` or `productId`), so all
+events of one aggregate land on the same partition and stay ordered.
 
 ## Topics
 
-| Topic | Producer | Consumers | Purpose |
+| Topic | Message key | Producer | Consumers |
 | --- | --- | --- | --- |
-| `product-events` | product-service | search-service, notification-service | catalogue changes |
-| `order-events` | order-service | product-service, notification-service | order lifecycle |
-| `inventory-events` | product-service | order-service, notification-service | stock reservation result |
+| `product-events` | productId | product-service | search-service |
+| `order-events` | orderId | order-service | product-service, notification-service |
+| `inventory-events` | orderId | product-service | order-service, notification-service |
+
+The topics are declared in `KafkaTopicConfig` with `NewTopic` / `TopicBuilder`
+(3 partitions, replication factor 1). Their names come from
+`config-repo/application.yml` (`app.topics.*`).
 
 ## product-events
 
@@ -54,8 +59,8 @@ events for the same aggregate land on the same partition and stay ordered.
 }
 ```
 
-Search-service upserts the document; notification-service records that the
-catalogue changed.
+search-service upserts the document in the `products` index through
+`ProductSearchRepository`.
 
 ### ProductDeleted
 
@@ -68,16 +73,16 @@ catalogue changed.
 }
 ```
 
-Search-service removes the document from the index.
+search-service removes the document from the index.
 
 ## order-events
 
-### OrderCreated
+### OrderPlaced
 
 ```json
 {
   "eventId": "…",
-  "eventType": "OrderCreated",
+  "eventType": "OrderPlaced",
   "occurredAt": "2026-11-11T12:00:00Z",
   "payload": {
     "orderId": 10,
@@ -90,7 +95,7 @@ Search-service removes the document from the index.
 }
 ```
 
-Product-service locks the referenced rows, checks stock and either reserves all
+product-service locks the referenced rows, checks stock and either reserves all
 items or rejects the whole order.
 
 ### OrderConfirmed
@@ -161,25 +166,24 @@ items or rejects the whole order.
 
 ## Consumer groups
 
-| Consumer | Group | Binding |
+| Consumer | Group | Topic |
 | --- | --- | --- |
-| product-service | `product-service` | `orderEvents-in-0` |
-| order-service | `order-service` | `inventoryEvents-in-0` |
-| search-service | `search-service` | `productEvents-in-0` |
-| notification-service | `notification-service-order` | `orderEvents-in-0` |
-| notification-service | `notification-service-inventory` | `inventoryEvents-in-0` |
-| notification-service | `notification-service-product` | `productEvents-in-0` |
+| product-service (2 instances) | `product-service` | `order-events` |
+| order-service | `order-service` | `inventory-events` |
+| search-service | `search-service` | `product-events` |
+| notification-service | `notification-service` | `order-events`, `inventory-events` |
 
 Each group has its own offset, so notification-service does not steal messages
-from the business consumers.
+from the business consumers. The two product instances share the
+`product-service` group, so the three partitions of `order-events` are split
+between them.
 
 ## Delivery and idempotency
 
-- Consumers use at-least-once delivery; `max-attempts` is 3 with exponential
-  backoff.
-- `stock_reservations.order_id` is the primary key. A redelivered
-  `OrderCreated` returns the previous reservation and republishes the result
-  instead of reserving stock twice.
-- `order-service` only changes an order when it is still `PENDING`, so a
-  duplicate `StockReserved` / `StockRejected` is a no-op.
+- Delivery is at-least-once.
+- `stock_reservations.order_id` is the primary key. A redelivered `OrderPlaced`
+  returns the previous reservation and republishes the result instead of
+  reserving stock twice.
+- order-service only changes an order when it is still `PENDING`, so a duplicate
+  `StockReserved` / `StockRejected` is a no-op.
 - notification-service keeps a bounded set of `eventId`s and ignores duplicates.
