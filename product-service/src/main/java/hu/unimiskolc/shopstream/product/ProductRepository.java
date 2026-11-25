@@ -12,7 +12,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     /**
      * Row-level lock used by the inventory saga so two concurrent orders cannot
-     * sell the same unit. PostgreSQL maps this to SELECT ... FOR UPDATE.
+     * sell the same unit. On MySQL this becomes SELECT ... FOR UPDATE inside the
+     * transaction.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Product p where p.id = :id")

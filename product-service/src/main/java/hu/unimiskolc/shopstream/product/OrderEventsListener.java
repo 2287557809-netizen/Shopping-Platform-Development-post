@@ -1,21 +1,20 @@
 package hu.unimiskolc.shopstream.product;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-import java.util.function.Consumer;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
 
 /**
- * Consumes OrderCreated and turns it into a stock reservation. The result is
- * published to inventory-events where order-service and notification-service
- * consume it.
+ * Step 2, task 5: consumes OrderPlaced from order-events in consumer group
+ * product-service, reserves the stock in one database transaction and publishes
+ * StockReserved or StockRejected to inventory-events.
  */
-@Configuration
+@Component
 public class OrderEventsListener {
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventsListener.class);
@@ -23,6 +22,9 @@ public class OrderEventsListener {
     private final ObjectMapper objectMapper;
     private final ReservationService reservationService;
     private final EventPublisher eventPublisher;
+
+    @Value("${app.topics.inventory-events:inventory-events}")
+    private String inventoryEventsTopic;
 
     public OrderEventsListener(ObjectMapper objectMapper,
                                ReservationService reservationService,
@@ -32,30 +34,28 @@ public class OrderEventsListener {
         this.eventPublisher = eventPublisher;
     }
 
-    @Bean
-    public Consumer<String> orderEvents() {
-        return this::handleOrderEvent;
-    }
+    @KafkaListener(topics = "${app.topics.order-events:order-events}", groupId = "product-service")
+    public void onOrderEvent(ConsumerRecord<String, EventMessage> record) {
+        EventMessage event = record.value();
+        if (event == null) {
+            return;
+        }
+        if (!"OrderPlaced".equals(event.eventType())) {
+            return;
+        }
+        log.info("Received {} key={} partition={} offset={}",
+                event.eventType(), record.key(), record.partition(), record.offset());
 
-    void handleOrderEvent(String message) {
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(message);
-        } catch (JsonProcessingException ex) {
-            log.error("Dropping malformed order event: {}", message, ex);
+        if (event.payload() == null) {
+            log.error("OrderPlaced event without payload: key={}", record.key());
             return;
         }
 
-        String eventType = root.path("eventType").asText();
-        if (!"OrderCreated".equals(eventType)) {
-            return;
-        }
-
-        OrderCreatedPayload payload;
+        OrderPlacedPayload payload;
         try {
-            payload = objectMapper.treeToValue(root.path("payload"), OrderCreatedPayload.class);
+            payload = objectMapper.treeToValue(event.payload(), OrderPlacedPayload.class);
         } catch (JsonProcessingException | IllegalArgumentException ex) {
-            log.error("Dropping invalid OrderCreated payload: {}", root.path("payload"), ex);
+            log.error("Dropping invalid OrderPlaced payload: {}", event.payload(), ex);
             return;
         }
 
@@ -68,6 +68,6 @@ public class OrderEventsListener {
         }
 
         String eventName = result.reserved() ? "StockReserved" : "StockRejected";
-        eventPublisher.publish("inventoryEvents-out-0", String.valueOf(result.orderId()), eventName, result);
+        eventPublisher.publish(inventoryEventsTopic, String.valueOf(result.orderId()), eventName, result);
     }
 }

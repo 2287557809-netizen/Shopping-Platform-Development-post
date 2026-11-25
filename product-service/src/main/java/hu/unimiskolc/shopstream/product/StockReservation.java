@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * One row per order. It makes the OrderCreated consumer idempotent: a redelivered
+ * One row per order. It makes the OrderPlaced consumer idempotent: a redelivered
  * Kafka record finds the reservation and only republishes the previous result.
  */
 @Entity

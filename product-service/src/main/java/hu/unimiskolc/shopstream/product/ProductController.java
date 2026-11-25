@@ -30,11 +30,8 @@ public class ProductController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Product> one(@PathVariable Long id) {
-        ProductService.CachedProduct cached = service.get(id);
-        return ResponseEntity.ok()
-                .header("X-Cache", cached.cacheHit() ? "HIT" : "MISS")
-                .body(cached.product());
+    public Product one(@PathVariable Long id) {
+        return service.get(id);
     }
 
     @PostMapping

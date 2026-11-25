@@ -1,61 +1,52 @@
 package hu.unimiskolc.shopstream.product;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.cloud.stream.function.StreamBridge;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
-import org.springframework.util.MimeTypeUtils;
 
 import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 /**
- * Publishes the common JSON envelope through Spring Cloud Stream.
+ * Publishes events with {@link KafkaTemplate}.
  *
- * <p>The payload is deliberately sent as a JSON string with a text/plain content
- * type. Each consumer owns its own event DTO, so the services stay decoupled and
- * no Java class name has to travel through Kafka headers.</p>
+ * <p>Step 2, task 3: the value is a JSON event serialised by JsonSerializer and
+ * the key is the aggregate id (productId or orderId). Kafka hashes the key, so
+ * all events of one aggregate go to the same partition and stay in order.</p>
  */
 @Component
 public class EventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(EventPublisher.class);
 
-    private final StreamBridge streamBridge;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
 
-    public EventPublisher(StreamBridge streamBridge, ObjectMapper objectMapper) {
-        this.streamBridge = streamBridge;
+    public EventPublisher(KafkaTemplate<String, Object> kafkaTemplate, ObjectMapper objectMapper) {
+        this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
     }
 
-    public void publish(String binding, String key, String eventType, Object payload) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("eventId", UUID.randomUUID().toString());
-        envelope.put("eventType", eventType);
-        envelope.put("occurredAt", Instant.now().toString());
-        envelope.put("payload", payload);
+    public void publish(String topic, String key, String eventType, Object payload) {
+        JsonNode body = payload == null ? null : objectMapper.valueToTree(payload);
+        EventMessage event = new EventMessage(
+                UUID.randomUUID().toString(), eventType, Instant.now().toString(), body);
 
-        String json;
-        try {
-            json = objectMapper.writeValueAsString(envelope);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cannot serialize event " + eventType, ex);
-        }
-
-        Message<String> message = MessageBuilder.withPayload(json)
-                .setHeader(KafkaHeaders.KEY, key)
-                .setHeader("contentType", MimeTypeUtils.TEXT_PLAIN_VALUE)
-                .build();
-
-        boolean sent = streamBridge.send(binding, message);
-        log.info("Published {} key={} binding={} sent={}", eventType, key, binding, sent);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(topic, key, event);
+        future.whenComplete((result, error) -> {
+            if (error != null) {
+                log.error("Failed to publish {} key={} to {}", eventType, key, topic, error);
+            } else if (result != null) {
+                log.info("Published {} key={} to {} partition={} offset={}",
+                        eventType, key, topic,
+                        result.getRecordMetadata().partition(),
+                        result.getRecordMetadata().offset());
+            }
+        });
     }
 }

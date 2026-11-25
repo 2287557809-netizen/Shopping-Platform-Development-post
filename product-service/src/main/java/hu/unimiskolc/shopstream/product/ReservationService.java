@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,11 +20,14 @@ public class ReservationService {
 
     private final ProductRepository productRepository;
     private final StockReservationRepository reservationRepository;
+    private final ProductCacheEvictor cacheEvictor;
 
     public ReservationService(ProductRepository productRepository,
-                              StockReservationRepository reservationRepository) {
+                              StockReservationRepository reservationRepository,
+                              ProductCacheEvictor cacheEvictor) {
         this.productRepository = productRepository;
         this.reservationRepository = reservationRepository;
+        this.cacheEvictor = cacheEvictor;
     }
 
     /**
@@ -30,7 +35,7 @@ public class ReservationService {
      * two orders that contain the same products in a different sequence.
      */
     @Transactional
-    public ReservationResult reserve(OrderCreatedPayload payload) {
+    public ReservationResult reserve(OrderPlacedPayload payload) {
         if (payload.orderId() == null) {
             throw new InsufficientStockException("Order id is missing");
         }
@@ -73,6 +78,12 @@ public class ReservationService {
         reservationRepository.save(new StockReservation(
                 payload.orderId(), ReservationStatus.RESERVED, null));
 
+        // Step 4, task 5: the cached product still shows the old stock, so it is
+        // evicted - after the commit, because a rollback must keep the cache.
+        evictProductCacheAfterCommit(reserved.stream()
+                .map(ReservationResult.ReservedItem::productId)
+                .toList());
+
         log.info("Reserved stock for order {}: {}", payload.orderId(), reserved);
         return new ReservationResult(payload.orderId(), "RESERVED", reserved, null);
     }
@@ -96,5 +107,21 @@ public class ReservationService {
         reservationRepository.save(new StockReservation(orderId, ReservationStatus.REJECTED, safeReason));
         log.info("Rejected order {}: {}", orderId, safeReason);
         return new ReservationResult(orderId, "REJECTED", List.of(), safeReason);
+    }
+
+    private void evictProductCacheAfterCommit(List<Long> productIds) {
+        if (productIds.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    productIds.forEach(cacheEvictor::evict);
+                }
+            });
+        } else {
+            productIds.forEach(cacheEvictor::evict);
+        }
     }
 }

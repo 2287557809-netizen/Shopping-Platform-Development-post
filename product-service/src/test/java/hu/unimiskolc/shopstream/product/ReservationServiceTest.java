@@ -28,10 +28,13 @@ class ReservationServiceTest {
     @Mock
     private StockReservationRepository reservationRepository;
 
+    @Mock
+    private ProductCacheEvictor cacheEvictor;
+
     private ReservationService service;
 
     private void setUpService() {
-        service = new ReservationService(productRepository, reservationRepository);
+        service = new ReservationService(productRepository, reservationRepository, cacheEvictor);
     }
 
     @Test
@@ -47,7 +50,7 @@ class ReservationServiceTest {
         when(reservationRepository.save(any(StockReservation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        OrderCreatedPayload payload = new OrderCreatedPayload(100L, List.of(
+        OrderPlacedPayload payload = new OrderPlacedPayload(100L, List.of(
                 new OrderItemPayload(2L, 1),
                 new OrderItemPayload(1L, 2)), new BigDecimal("42.00"));
 
@@ -61,6 +64,9 @@ class ReservationServiceTest {
         lockOrder.verify(productRepository).findByIdForUpdate(1L);
         lockOrder.verify(productRepository).findByIdForUpdate(2L);
         verify(reservationRepository).save(any(StockReservation.class));
+        // Step 4, task 5: reserved stock invalidates the cached product read.
+        verify(cacheEvictor).evict(1L);
+        verify(cacheEvictor).evict(2L);
     }
 
     @Test
@@ -71,7 +77,7 @@ class ReservationServiceTest {
         when(reservationRepository.findById(101L)).thenReturn(Optional.empty());
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
-        OrderCreatedPayload payload = new OrderCreatedPayload(101L, List.of(
+        OrderPlacedPayload payload = new OrderPlacedPayload(101L, List.of(
                 new OrderItemPayload(1L, 2)), new BigDecimal("20.00"));
 
         assertThatThrownBy(() -> service.reserve(payload))
@@ -80,6 +86,7 @@ class ReservationServiceTest {
 
         assertThat(product.getStock()).isEqualTo(1);
         verify(reservationRepository, never()).save(any());
+        verifyNoInteractions(cacheEvictor);
     }
 
     @Test
@@ -88,7 +95,7 @@ class ReservationServiceTest {
         StockReservation existing = new StockReservation(102L, ReservationStatus.RESERVED, null);
         when(reservationRepository.findById(102L)).thenReturn(Optional.of(existing));
 
-        ReservationResult result = service.reserve(new OrderCreatedPayload(
+        ReservationResult result = service.reserve(new OrderPlacedPayload(
                 102L, List.of(new OrderItemPayload(1L, 1)), BigDecimal.ONE));
 
         assertThat(result.status()).isEqualTo("RESERVED");
@@ -112,7 +119,7 @@ class ReservationServiceTest {
     @Test
     void rejectsEmptyOrders() {
         setUpService();
-        assertThatThrownBy(() -> service.reserve(new OrderCreatedPayload(
+        assertThatThrownBy(() -> service.reserve(new OrderPlacedPayload(
                 104L, List.of(), BigDecimal.ZERO)))
                 .isInstanceOf(InsufficientStockException.class);
         verifyNoInteractions(productRepository);
