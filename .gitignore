@@ -24,3 +24,11 @@ Thumbs.db
 .env
 .env.local
 docker-compose.override.yml
+
+# ---- Generated report artefacts (rebuild with scripts/build-report.py) ----
+docs/DESIGN-REPORT.html
+docs/DESIGN-REPORT-zh.html
+
+# ---- Local review copy of the report (not part of the submission) ----
+docs/DESIGN-REPORT-zh.md
+docs/ShopStream-Design-Report-zh.pdf

@@ -8,8 +8,8 @@
 #   Eureka          http://localhost:8761
 #   Config Server   http://localhost:8888
 #   Elasticsearch   http://localhost:9200
-#   Product DB      localhost:5432  (product / product-pw)
-#   Order DB        localhost:5433  (order / order-pw)
+#   Product DB      localhost:3306  (product / product-pw, MySQL 8.4)
+#   Order DB        localhost:3307  (order / order-pw, MySQL 8.4)
 #   Redis           localhost:6379  (password mypass)
 #   Kafka           localhost:29092 (from the host)
 services:
@@ -21,13 +21,13 @@ services:
     ports:
       - "8888:8888"
 
-  product-postgres:
+  product-mysql:
     ports:
-      - "5432:5432"
+      - "3306:3306"
 
-  order-postgres:
+  order-mysql:
     ports:
-      - "5433:5432"
+      - "3307:3306"
 
   redis:
     ports:

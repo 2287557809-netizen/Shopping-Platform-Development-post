@@ -1,9 +1,10 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/productdb}
+    # Step 1: product-service owns one MySQL database, never the order database.
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/productdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8}
     username: ${SPRING_DATASOURCE_USERNAME:product}
     password: ${SPRING_DATASOURCE_PASSWORD:product-pw}
-    driver-class-name: org.postgresql.Driver
+    driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
   jpa:
@@ -20,31 +21,29 @@ spring:
       port: ${SPRING_REDIS_PORT:6379}
       password: ${SPRING_REDIS_PASSWORD:mypass}
       timeout: 2s
-  cloud:
-    function:
-      definition: orderEvents
-    stream:
-      bindings:
-        productEvents-out-0:
-          destination: product-events
-          content-type: text/plain
-        orderEvents-in-0:
-          destination: order-events
-          group: product-service
-          content-type: text/plain
-        inventoryEvents-out-0:
-          destination: inventory-events
-          content-type: text/plain
-      kafka:
-        bindings:
-          productEvents-out-0:
-            producer:
-              configuration:
-                key.serializer: org.apache.kafka.common.serialization.StringSerializer
-          inventoryEvents-out-0:
-            producer:
-              configuration:
-                key.serializer: org.apache.kafka.common.serialization.StringSerializer
-          orderEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
+  # Step 4, task 5: the cache named "products" is stored in Redis, 2 minutes TTL.
+  cache:
+    type: redis
+    redis:
+      time-to-live: 2m
+      cache-null-values: false
+      use-key-prefix: true
+  # Step 2: JSON events with KafkaTemplate and @KafkaListener.
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: product-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: hu.unimiskolc.shopstream.product.EventMessage
+    listener:
+      ack-mode: record

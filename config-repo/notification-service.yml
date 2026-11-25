@@ -1,29 +1,15 @@
 spring:
-  cloud:
-    function:
-      definition: orderEvents;inventoryEvents;productEvents
-    stream:
-      bindings:
-        orderEvents-in-0:
-          destination: order-events
-          group: notification-service-order
-          content-type: text/plain
-        inventoryEvents-in-0:
-          destination: inventory-events
-          group: notification-service-inventory
-          content-type: text/plain
-        productEvents-in-0:
-          destination: product-events
-          group: notification-service-product
-          content-type: text/plain
-      kafka:
-        bindings:
-          orderEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
-          inventoryEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
-          productEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
+  # Step 2: one consumer group, subscribed to order-events and inventory-events.
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: hu.unimiskolc.shopstream.notification.EventMessage
+    listener:
+      ack-mode: record

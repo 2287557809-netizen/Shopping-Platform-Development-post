@@ -1,9 +1,10 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orderdb}
+    # Step 1: order-service owns its own MySQL database, separate from productdb.
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/orderdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8}
     username: ${SPRING_DATASOURCE_USERNAME:order}
     password: ${SPRING_DATASOURCE_PASSWORD:order-pw}
-    driver-class-name: org.postgresql.Driver
+    driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
   jpa:
@@ -14,27 +15,26 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
+  # Step 2: JSON events, key = orderId.
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: hu.unimiskolc.shopstream.order.EventMessage
+    listener:
+      ack-mode: record
   cloud:
-    function:
-      definition: inventoryEvents
-    stream:
-      bindings:
-        orderEvents-out-0:
-          destination: order-events
-          content-type: text/plain
-        inventoryEvents-in-0:
-          destination: inventory-events
-          group: order-service
-          content-type: text/plain
-      kafka:
-        bindings:
-          orderEvents-out-0:
-            producer:
-              configuration:
-                key.serializer: org.apache.kafka.common.serialization.StringSerializer
-          inventoryEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
     openfeign:
       client:
         config:

@@ -15,5 +15,6 @@ spring:
             logger-level: basic
 
 cart:
-  # Sliding TTL refreshed on every mutation; ISO-8601 or "30m" both work.
-  ttl: 30m
+  # Step 4, task 3: carts expire, the period is documented in the README.
+  # Seconds; 1800 = 30 minutes, refreshed on every write.
+  time-to-live-seconds: 1800

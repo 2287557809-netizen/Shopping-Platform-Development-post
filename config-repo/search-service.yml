@@ -3,17 +3,17 @@ spring:
     uris: ${SPRING_ELASTICSEARCH_URIS:http://localhost:9200}
     connection-timeout: 2s
     socket-timeout: 5s
-  cloud:
-    function:
-      definition: productEvents
-    stream:
-      bindings:
-        productEvents-in-0:
-          destination: product-events
-          group: search-service
-          content-type: text/plain
-      kafka:
-        bindings:
-          productEvents-in-0:
-            consumer:
-              auto-offset-reset: earliest
+  # Step 2/3: JSON events from product-service, consumer group search-service.
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: search-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: hu.unimiskolc.shopstream.search.EventMessage
+    listener:
+      ack-mode: record

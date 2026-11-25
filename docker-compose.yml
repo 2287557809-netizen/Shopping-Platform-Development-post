@@ -34,35 +34,42 @@ services:
       retries: 30
       start_period: 20s
 
-  product-postgres:
-    image: postgres:16-alpine
+  # ---------------------------------------------------------------------------
+  # Step 1: one MySQL container (one database) per service that needs one.
+  # ---------------------------------------------------------------------------
+  product-mysql:
+    image: mysql:8.4
     restart: unless-stopped
     environment:
-      POSTGRES_DB: productdb
-      POSTGRES_USER: product
-      POSTGRES_PASSWORD: product-pw
+      MYSQL_DATABASE: productdb
+      MYSQL_USER: product
+      MYSQL_PASSWORD: product-pw
+      MYSQL_ROOT_PASSWORD: root-pw
     volumes:
-      - product-postgres-data:/var/lib/postgresql/data
+      - product-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U product -d productdb"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
 
-  order-postgres:
-    image: postgres:16-alpine
+  order-mysql:
+    image: mysql:8.4
     restart: unless-stopped
     environment:
-      POSTGRES_DB: orderdb
-      POSTGRES_USER: order
-      POSTGRES_PASSWORD: order-pw
+      MYSQL_DATABASE: orderdb
+      MYSQL_USER: order
+      MYSQL_PASSWORD: order-pw
+      MYSQL_ROOT_PASSWORD: root-pw
     volumes:
-      - order-postgres-data:/var/lib/postgresql/data
+      - order-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U order -d orderdb"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
@@ -76,6 +83,8 @@ services:
       timeout: 3s
       retries: 20
 
+  # Single node in KRaft mode: no ZooKeeper container, the broker and the
+  # controller run in the same process.
   kafka:
     image: apache/kafka:3.9.1
     restart: unless-stopped
@@ -117,13 +126,20 @@ services:
       retries: 30
       start_period: 30s
 
-  product-service:
+  # ---------------------------------------------------------------------------
+  # Step 5, task 1: two product-service instances, both registered in Eureka.
+  # They share product-mysql and form one Kafka consumer group, so the three
+  # order-events partitions are split between them.
+  # ---------------------------------------------------------------------------
+  product-service-1:
     build: ./product-service
     restart: unless-stopped
     environment:
       CONFIG_SERVER_URL: http://config-server:8888
       EUREKA_URL: http://discovery-server:8761/eureka/
-      SPRING_DATASOURCE_URL: jdbc:postgresql://product-postgres:5432/productdb
+      EUREKA_INSTANCE_INSTANCE_ID: product-service-1
+      EUREKA_INSTANCE_HOSTNAME: product-service-1
+      SPRING_DATASOURCE_URL: jdbc:mysql://product-mysql:3306/productdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       SPRING_DATASOURCE_USERNAME: product
       SPRING_DATASOURCE_PASSWORD: product-pw
       SPRING_REDIS_HOST: redis
@@ -135,7 +151,40 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
-      product-postgres:
+      product-mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+  product-service-2:
+    build: ./product-service
+    restart: unless-stopped
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      EUREKA_INSTANCE_INSTANCE_ID: product-service-2
+      EUREKA_INSTANCE_HOSTNAME: product-service-2
+      SPRING_DATASOURCE_URL: jdbc:mysql://product-mysql:3306/productdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
+      SPRING_DATASOURCE_USERNAME: product
+      SPRING_DATASOURCE_PASSWORD: product-pw
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: mypass
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      product-mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -154,7 +203,7 @@ services:
     environment:
       CONFIG_SERVER_URL: http://config-server:8888
       EUREKA_URL: http://discovery-server:8761/eureka/
-      SPRING_DATASOURCE_URL: jdbc:postgresql://order-postgres:5432/orderdb
+      SPRING_DATASOURCE_URL: jdbc:mysql://order-mysql:3306/orderdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8
       SPRING_DATASOURCE_USERNAME: order
       SPRING_DATASOURCE_PASSWORD: order-pw
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -163,11 +212,11 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
-      order-postgres:
+      order-mysql:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      product-service:
+      product-service-1:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q '\"status\":\"UP\"'"]
@@ -192,7 +241,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      product-service:
+      product-service-1:
         condition: service_healthy
       order-service:
         condition: service_healthy
@@ -220,6 +269,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      product-service-1:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8084/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 10s
@@ -241,6 +292,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      product-service-1:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8085/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 10s
@@ -261,7 +314,9 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
-      product-service:
+      product-service-1:
+        condition: service_healthy
+      product-service-2:
         condition: service_healthy
       order-service:
         condition: service_healthy
@@ -279,8 +334,8 @@ services:
       start_period: 30s
 
 volumes:
-  product-postgres-data:
-  order-postgres-data:
+  product-mysql-data:
+  order-mysql-data:
   redis-data:
   kafka-data:
   elasticsearch-data:
