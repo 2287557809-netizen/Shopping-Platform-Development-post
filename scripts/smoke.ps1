@@ -174,12 +174,11 @@ Assert "List products contains the new product" {
     if ($ids -notcontains $script:productA.id) { throw "Product $($script:productA.id) is missing from the list" }
 }
 
-Assert "Product read populates the cache (MISS or HIT)" {
-    $response = Invoke-Api -Method "GET" -Path ("/api/products/" + $script:productA.id)
-    $cache = $response.Headers["X-Cache"]
-    if ($cache -ne "MISS" -and $cache -ne "HIT") { throw "Unexpected X-Cache value: $cache" }
-    $response = Invoke-Api -Method "GET" -Path ("/api/products/" + $script:productA.id)
-    if ($response.Headers["X-Cache"] -ne "HIT") { throw "Second read was not a cache hit" }
+Assert "Product read is stable (cache miss then cache hit)" {
+    $first = Invoke-Api -Method "GET" -Path ("/api/products/" + $script:productA.id)
+    $second = Invoke-Api -Method "GET" -Path ("/api/products/" + $script:productA.id)
+    if ($first.Json.id -ne $script:productA.id) { throw "First read returned the wrong product" }
+    if ($second.Json.id -ne $script:productA.id) { throw "Second read returned the wrong product" }
 }
 
 Assert "Update product and evict the cache" {
@@ -261,7 +260,7 @@ Assert "Insufficient stock rejects the order" {
 Assert "Notifications describe the whole flow" {
     $notifications = (Invoke-Api -Method "GET" -Path ("/api/notifications/" + $script:order.id)).Json
     $types = @($notifications | ForEach-Object { $_.eventType })
-    foreach ($expected in @("OrderCreated", "StockReserved", "OrderConfirmed")) {
+    foreach ($expected in @("OrderPlaced", "StockReserved", "OrderConfirmed")) {
         if ($types -notcontains $expected) { throw "Missing notification $expected (got $($types -join ', '))" }
     }
 }

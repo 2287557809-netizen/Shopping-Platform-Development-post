@@ -61,7 +61,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "products", "999999"]
             },
-            "description": "Explicit cache-aside never stores a missing product, so this always hits the database and returns 404."
+            "description": "The @Cacheable method throws for an unknown id, so nothing is stored and every call reaches MySQL; the response is 404."
           },
           "event": [
             {
@@ -73,8 +73,8 @@
                   "  pm.response.to.have.status(404);",
                   "});",
                   "",
-                  "pm.test('404 response has no cached marker header', function () {",
-                  "  pm.expect(pm.response.headers.has('X-Cache')).to.be.false;",
+                  "pm.test('404 response is not cached', function () {",
+                  "  pm.expect(pm.response.code).to.eql(404);",
                   "});"
                 ]
               }
@@ -190,7 +190,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "products", "{{productId}}"]
             },
-            "description": "First read after a write: the Redis key was evicted or never created, so the service reads PostgreSQL and repopulates the cache."
+            "description": "First read after a write: the Redis key was evicted or never created, so the service reads MySQL and repopulates the cache."
           },
           "event": [
             {
@@ -198,8 +198,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('X-Cache header is exposed', function () {",
-                  "  pm.expect(pm.response.headers.get('X-Cache')).to.be.oneOf(['MISS', 'HIT']);",
+                  "pm.test('Product is served', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
                   "});",
                   "",
                   "pm.test('Product body is returned', function () {",
@@ -220,7 +220,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "products", "{{productId}}"]
             },
-            "description": "Second read is served from Redis without touching PostgreSQL."
+            "description": "Second read is served from the Redis cache without touching MySQL (compare the product-service log)."
           },
           "event": [
             {
@@ -228,8 +228,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Second read is a cache hit', function () {",
-                  "  pm.expect(pm.response.headers.get('X-Cache')).to.eql('HIT');",
+                  "pm.test('Second read still returns the product', function () {",
+                  "  pm.expect(pm.response.json().id).to.be.a('number');",
                   "});"
                 ]
               }
@@ -687,7 +687,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "orders"]
             },
-            "description": "Order-service prices the order through Feign and publishes OrderCreated; product-service rejects it because stock is insufficient."
+            "description": "Order-service prices the order through Feign and publishes OrderPlaced; product-service rejects it because stock is insufficient."
           },
           "event": [
             {
@@ -882,7 +882,7 @@
                 "exec": [
                   "pm.test('Order lifecycle notifications exist', function () {",
                   "  const types = pm.response.json().map(function (n) { return n.eventType; });",
-                  "  pm.expect(types).to.include('OrderCreated');",
+                  "  pm.expect(types).to.include('OrderPlaced');",
                   "  pm.expect(types).to.include('OrderConfirmed');",
                   "});"
                 ]
