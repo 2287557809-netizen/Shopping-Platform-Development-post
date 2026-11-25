@@ -73,7 +73,7 @@ public class OrderService {
         Order saved = repository.save(order);
 
         // The transactional listener publishes only after this transaction commits.
-        events.publishEvent(new OrderCreatedEvent(saved.getId(), eventItems, total));
+        events.publishEvent(new OrderPlacedEvent(saved.getId(), eventItems, total));
 
         log.info("Order {} created with {} item(s), total {}", saved.getId(), eventItems.size(), total);
         return OrderResponse.from(saved);

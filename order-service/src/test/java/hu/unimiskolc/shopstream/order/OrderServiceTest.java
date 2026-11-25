@@ -58,7 +58,7 @@ class OrderServiceTest {
         assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
         assertThat(response.totalPrice()).isEqualByComparingTo("230.00");
         assertThat(response.items()).hasSize(2);
-        verify(events).publishEvent(any(OrderCreatedEvent.class));
+        verify(events).publishEvent(any(OrderPlacedEvent.class));
     }
 
     @Test

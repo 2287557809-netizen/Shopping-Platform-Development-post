@@ -16,44 +16,42 @@ class InventoryEventsListenerTest {
     @Mock
     private OrderService orderService;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private InventoryEventsListener listener;
 
     @BeforeEach
     void setUp() {
-        listener = new InventoryEventsListener(new ObjectMapper(), orderService);
+        listener = new InventoryEventsListener(orderService);
     }
 
     @Test
-    void confirmsTheOrderWhenStockWasReserved() {
-        listener.handleInventoryEvent("""
-                {"eventType":"StockReserved","payload":{"orderId":12,"status":"RESERVED"}}
-                """);
+    void confirmsTheOrderWhenStockWasReserved() throws Exception {
+        listener.handleInventoryEvent(event("""
+                {"eventId":"e1","eventType":"StockReserved","payload":{"orderId":12,"status":"RESERVED"}}
+                """));
 
         verify(orderService).applyInventoryResult(12L, true, null);
     }
 
     @Test
-    void rejectsTheOrderWithTheReason() {
-        listener.handleInventoryEvent("""
-                {"eventType":"StockRejected","payload":{"orderId":13,"reason":"Insufficient stock"}}
-                """);
+    void rejectsTheOrderWithTheReason() throws Exception {
+        listener.handleInventoryEvent(event("""
+                {"eventId":"e2","eventType":"StockRejected","payload":{"orderId":13,"reason":"Insufficient stock"}}
+                """));
 
         verify(orderService).applyInventoryResult(13L, false, "Insufficient stock");
     }
 
     @Test
-    void ignoresOtherEventTypes() {
-        listener.handleInventoryEvent("""
-                {"eventType":"SomethingElse","payload":{"orderId":14}}
-                """);
+    void ignoresOtherEventTypes() throws Exception {
+        listener.handleInventoryEvent(event("""
+                {"eventId":"e3","eventType":"SomethingElse","payload":{"orderId":14}}
+                """));
 
         verifyNoInteractions(orderService);
     }
 
-    @Test
-    void dropsMalformedJson() {
-        listener.handleInventoryEvent("not-json");
-
-        verifyNoInteractions(orderService);
+    private EventMessage event(String json) throws Exception {
+        return objectMapper.readValue(json, EventMessage.class);
     }
 }
