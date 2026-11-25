@@ -9,11 +9,15 @@ import org.springframework.data.elasticsearch.annotations.MultiField;
 import org.springframework.data.elasticsearch.annotations.Setting;
 import org.springframework.data.elasticsearch.annotations.WriteTypeHint;
 
-import java.math.BigDecimal;
-
-// Only ProductDocument lives in this index, so no "_class" type hint is written.
-@Document(indexName = "products", createIndex = true,
-        writeTypeHint = WriteTypeHint.FALSE)
+/**
+ * Step 3, task 4: the index mapping is explicit.
+ *
+ * <p>{@code @Document(indexName = "products")} binds the class to the index,
+ * {@code @Field} fixes each field type: name is text (analysed) with a keyword
+ * sub-field for exact sorting, description is text, category is keyword,
+ * price is double and stock is integer.</p>
+ */
+@Document(indexName = "products", createIndex = true, writeTypeHint = WriteTypeHint.FALSE)
 @Setting(shards = 1, replicas = 0)
 public class ProductDocument {
 
@@ -32,7 +36,7 @@ public class ProductDocument {
     private String category;
 
     @Field(type = FieldType.Double)
-    private BigDecimal price;
+    private Double price;
 
     @Field(type = FieldType.Integer)
     private Integer stock;
@@ -69,11 +73,11 @@ public class ProductDocument {
         this.category = category;
     }
 
-    public BigDecimal getPrice() {
+    public Double getPrice() {
         return price;
     }
 
-    public void setPrice(BigDecimal price) {
+    public void setPrice(Double price) {
         this.price = price;
     }
 
